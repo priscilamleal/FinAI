@@ -720,56 +720,61 @@ async function parseMillenniumPDF(file){
  if(!window.pdfjsLib)return {rows:[],error:"O leitor de PDF não carregou. Verifica a ligação à Internet."};
  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
- const rows=[];let year=null,month=null,prevBalance=null,foundAccount=false;
- const money=s=>Number(String(s).replace(/\s/g,"").replace(",","."));
- const valPattern=/^-?\d{1,3}(?:[ .]\d{3})*[.,]\d{2}$|^-?\d+[.,]\d{2}$/;
+ const rows=[]; let year=null,month=null,prevBalance=null,foundAccount=false;
+ const parseMoney=s=>{const v=String(s).replace(/\s/g,"").replace(/\.(?=\d{3}(?:\D|$))/g,"").replace(",",".");return Number(v)};
+ const moneyRE=/^-?\d{1,3}(?:[ .]\d{3})*[.,]\d{2}$|^-?\d+[.,]\d{2}$/;
  for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
   const page=await pdf.getPage(pageNo),content=await page.getTextContent();
   const lines=new Map();
   for(const item of content.items){
-   const str=String(item.str||"").trim();if(!str)continue;
+   const str=String(item.str||"").trim(); if(!str)continue;
    const y=Math.round(item.transform[5]*2)/2;
    if(!lines.has(y))lines.set(y,[]);
    lines.get(y).push({x:item.transform[4],str});
   }
-  const ordered=[...lines.entries()].sort((a,b)=>b[0]-a[0]);
-  for(const [,parts] of ordered){
-   parts.sort((a,b)=>a.x-b.x);
+  for(const [,parts0] of [...lines.entries()].sort((a,b)=>b[0]-a[0])){
+   const parts=parts0.sort((a,b)=>a.x-b.x);
    const text=parts.map(p=>p.str).join(" ").replace(/\s+/g," ").trim();
    const period=text.match(/EXTRATO DE\s+(20\d{2})\/(\d{2})\/\d{2}\s+A\s+20\d{2}\/\d{2}\/\d{2}/i);
    if(period){year=+period[1];month=+period[2];foundAccount=true;prevBalance=null;continue;}
    if(/CONTA APPARTE|APLICACOES FINANCEIRAS/i.test(text)){foundAccount=false;continue;}
    if(!foundAccount)continue;
-   if(/SALDO INICIAL|TRANSPORTE|A TRANSPORTAR/i.test(text)){
-    const numbers=parts.filter(p=>valPattern.test(p.str.replace(/\s/g,""))||valPattern.test(p.str)).filter(p=>p.x>400);
-    if(numbers.length)prevBalance=money(numbers[numbers.length-1].str);
-    continue;
+   if(/SALDO INICIAL/i.test(text)){
+    const vals=parts.filter(p=>p.x>300&&moneyRE.test(p.str.trim()));
+    if(vals.length)prevBalance=parseMoney(vals[vals.length-1].str); continue;
    }
-   const dateMatch=text.match(/^(\d{1,2})[.\/](\d{2})\s+(\d{1,2})[.\/](\d{2})\s+(.+)$/);
-   if(!dateMatch)continue;
-   const day=+dateMatch[2],m=+dateMatch[1];
-   if(day<1||day>31||m<1||m>12||!year)continue;
-   const amounts=parts.filter(p=>p.x>315 && valPattern.test(p.str.trim()));
-   // Some PDF generators split the thousands and decimal portions across text fragments.
-   const right=parts.filter(p=>p.x>300).sort((a,b)=>a.x-b.x);
-   const numeric=right.filter(p=>/^[\d\s.,-]+$/.test(p.str) && /[.,]\d{2}$/.test(p.str.trim()));
-   const candidates=amounts.length?amounts:numeric;
-   if(candidates.length<2)continue;
-   const balance=money(candidates[candidates.length-1].str);
-   const amountAbs=money(candidates[candidates.length-2].str);
-   if(!Number.isFinite(balance)||!Number.isFinite(amountAbs))continue;
+   if(/TRANSPORTE|A TRANSPORTAR|SALDO FINAL|SALDO DISPONIVEL/i.test(text))continue;
+   // Data de lançamento e data-valor vêm antes da descrição.
+   const dm=text.match(/^\s*(\d{1,2})[.]?(\d{2})\s+(\d{1,2})[.]?(\d{2})\s+/);
+   if(!dm||!year)continue;
+   const d1=+dm[1],m1=+dm[2],d2=+dm[3],m2=+dm[4];
+   // No extrato Millennium, as duas datas são apresentadas como M.DD (ex.: 9.02).
+   const day=d2, m=m2;
+   if(day<1||day>31||m<1||m>12)continue;
+   // Obter valores pelo alinhamento das colunas: débito, crédito e saldo.
+   const nums=parts.map(p=>({x:p.x,str:p.str.trim()})).filter(p=>moneyRE.test(p.str));
+   const balanceCandidates=nums.filter(p=>p.x>450);
+   if(!balanceCandidates.length)continue;
+   const balance=parseMoney(balanceCandidates[balanceCandidates.length-1].str);
+   if(!Number.isFinite(balance))continue;
+   // Valores de débito/crédito ficam antes do saldo. O maior x antes do saldo é o movimento.
+   const amountCandidates=nums.filter(p=>p.x>300&&p.x<balanceCandidates[balanceCandidates.length-1].x-12);
+   if(!amountCandidates.length)continue;
+   const amountToken=amountCandidates[amountCandidates.length-1];
+   const amountAbs=Math.abs(parseMoney(amountToken.str));
+   if(!Number.isFinite(amountAbs)||amountAbs===0)continue;
    let amount;
-   if(prevBalance!==null){const delta=Math.round((balance-prevBalance)*100)/100;
+   if(prevBalance!==null){
+    const delta=Math.round((balance-prevBalance)*100)/100;
     if(Math.abs(Math.abs(delta)-amountAbs)>0.02)continue;
     amount=delta;
-   }else{
-    // The first movement is only accepted when a prior balance is available.
-    continue;
-   }
-   const descriptionParts=parts.filter(p=>p.x>=110&&p.x<Math.min(candidates[candidates.length-2].x,480));
-   let description=descriptionParts.map(p=>p.str).join(" ").replace(/\s+/g," ").trim();
-   if(!description){description=dateMatch[5].replace(/\s+[\d .]+[.,]\d{2}\s+[\d .]+[.,]\d{2}$/,'').trim();}
-   if(!description)continue;
+   } else { continue; }
+   // Descrição fica entre as datas (x baixo) e a primeira coluna monetária.
+   const firstMoneyX=Math.min(...amountCandidates.map(p=>p.x));
+   const descParts=parts.filter(p=>p.x>=105&&p.x<firstMoneyX-2 && !/^\d+[.,]?\d*$/.test(p.str.trim()));
+   let description=descParts.map(p=>p.str).join(" ").replace(/\s+/g," ").trim();
+   description=description.replace(/^\d{1,2}[.]?\d{2}\s+\d{1,2}[.]?\d{2}\s*/,"").trim();
+   if(!description||description.length<2){prevBalance=balance;continue;}
    const date=`${year}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
    const [cat,sub,merchant,method,confidence]=classify(description);
    rows.push({date,description,merchant:merchant||description,amount,category:cat,subcategory:sub,account:"Millennium BCP",sourceFile:file.name,aiConfidence:confidence||"Baixa",classificationMethod:method,manuallyConfirmed:false});
