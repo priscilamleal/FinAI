@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FinAI — Finanças Pessoais</title>
-<link rel="stylesheet" href="styles.css"><script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script></head>
+<link rel="stylesheet" href="styles.css"><script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script></head>
 <body>
 <div class="app">
 <aside class="side"><div class="logo">Fin<span>AI</span></div><div style="font-size:11px;color:#aeb6c6;padding:0 12px 16px">Gratuita · Dados privados</div><nav class="nav">
@@ -21,8 +21,8 @@
 <div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">📥 Importar e validar extratos</h2><button class="btn secondary" onclick="closeModal()">✕</button></div>
 <p class="sub">Selecione um ou vários ficheiros. O FinAI analisa os valores antes de os guardar.</p>
 <div class="drop">
-<input id="csv" type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" multiple onchange="updateSelectedFiles()">
-<p class="small">CSV, Excel (.xlsx/.xls) e PDF Millennium BCP</p>
+<input id="csv" type="file" accept=".csv,.txt,.xlsx,.xls" multiple onchange="updateSelectedFiles()">
+<p class="small">CSV e Excel (.xlsx/.xls)</p>
 <div id="selectedFiles" class="selected-files"></div>
 <div style="display:flex;justify-content:center;margin-top:10px"><button type="button" class="btn danger" id="clearUploadBtn" onclick="clearSelectedFiles()" style="display:none">🗑️ Apagar ficheiros selecionados</button></div>
 </div>
@@ -714,78 +714,7 @@ function parseExcelInWorker(file){
    }catch(err){finish(reject,err)}
  });
 }
-
-// Importação de PDF Millennium BCP: texto processado apenas no navegador.
-async function parseMillenniumPDF(file){
- if(!window.pdfjsLib)return {rows:[],error:"O leitor de PDF não carregou. Verifica a ligação à Internet."};
- pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
- const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
- const rows=[]; let year=null,month=null,prevBalance=null,foundAccount=false;
- const parseMoney=s=>{const v=String(s).replace(/\s/g,"").replace(/\.(?=\d{3}(?:\D|$))/g,"").replace(",",".");return Number(v)};
- const moneyRE=/^-?\d{1,3}(?:[ .]\d{3})*[.,]\d{2}$|^-?\d+[.,]\d{2}$/;
- for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
-  const page=await pdf.getPage(pageNo),content=await page.getTextContent();
-  const lines=new Map();
-  for(const item of content.items){
-   const str=String(item.str||"").trim(); if(!str)continue;
-   const y=Math.round(item.transform[5]*2)/2;
-   if(!lines.has(y))lines.set(y,[]);
-   lines.get(y).push({x:item.transform[4],str});
-  }
-  for(const [,parts0] of [...lines.entries()].sort((a,b)=>b[0]-a[0])){
-   const parts=parts0.sort((a,b)=>a.x-b.x);
-   const text=parts.map(p=>p.str).join(" ").replace(/\s+/g," ").trim();
-   const period=text.match(/EXTRATO DE\s+(20\d{2})\/(\d{2})\/\d{2}\s+A\s+20\d{2}\/\d{2}\/\d{2}/i);
-   if(period){year=+period[1];month=+period[2];foundAccount=true;prevBalance=null;continue;}
-   if(/CONTA APPARTE|APLICACOES FINANCEIRAS/i.test(text)){foundAccount=false;continue;}
-   if(!foundAccount)continue;
-   if(/SALDO INICIAL/i.test(text)){
-    const vals=parts.filter(p=>p.x>300&&moneyRE.test(p.str.trim()));
-    if(vals.length)prevBalance=parseMoney(vals[vals.length-1].str); continue;
-   }
-   if(/TRANSPORTE|A TRANSPORTAR|SALDO FINAL|SALDO DISPONIVEL/i.test(text))continue;
-   // Data de lançamento e data-valor vêm antes da descrição.
-   const dm=text.match(/^\s*(\d{1,2})[.]?(\d{2})\s+(\d{1,2})[.]?(\d{2})\s+/);
-   if(!dm||!year)continue;
-   const d1=+dm[1],m1=+dm[2],d2=+dm[3],m2=+dm[4];
-   // No extrato Millennium, as duas datas são apresentadas como M.DD (ex.: 9.02).
-   const day=d2, m=m2;
-   if(day<1||day>31||m<1||m>12)continue;
-   // Obter valores pelo alinhamento das colunas: débito, crédito e saldo.
-   const nums=parts.map(p=>({x:p.x,str:p.str.trim()})).filter(p=>moneyRE.test(p.str));
-   const balanceCandidates=nums.filter(p=>p.x>450);
-   if(!balanceCandidates.length)continue;
-   const balance=parseMoney(balanceCandidates[balanceCandidates.length-1].str);
-   if(!Number.isFinite(balance))continue;
-   // Valores de débito/crédito ficam antes do saldo. O maior x antes do saldo é o movimento.
-   const amountCandidates=nums.filter(p=>p.x>300&&p.x<balanceCandidates[balanceCandidates.length-1].x-12);
-   if(!amountCandidates.length)continue;
-   const amountToken=amountCandidates[amountCandidates.length-1];
-   const amountAbs=Math.abs(parseMoney(amountToken.str));
-   if(!Number.isFinite(amountAbs)||amountAbs===0)continue;
-   let amount;
-   if(prevBalance!==null){
-    const delta=Math.round((balance-prevBalance)*100)/100;
-    if(Math.abs(Math.abs(delta)-amountAbs)>0.02)continue;
-    amount=delta;
-   } else { continue; }
-   // Descrição fica entre as datas (x baixo) e a primeira coluna monetária.
-   const firstMoneyX=Math.min(...amountCandidates.map(p=>p.x));
-   const descParts=parts.filter(p=>p.x>=105&&p.x<firstMoneyX-2 && !/^\d+[.,]?\d*$/.test(p.str.trim()));
-   let description=descParts.map(p=>p.str).join(" ").replace(/\s+/g," ").trim();
-   description=description.replace(/^\d{1,2}[.]?\d{2}\s+\d{1,2}[.]?\d{2}\s*/,"").trim();
-   if(!description||description.length<2){prevBalance=balance;continue;}
-   const date=`${year}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-   const [cat,sub,merchant,method,confidence]=classify(description);
-   rows.push({date,description,merchant:merchant||description,amount,category:cat,subcategory:sub,account:"Millennium BCP",sourceFile:file.name,aiConfidence:confidence||"Baixa",classificationMethod:method,manuallyConfirmed:false});
-   prevBalance=balance;
-  }
- }
- return rows.length?{rows,error:null}:{rows:[],error:"Não consegui extrair movimentos deste PDF. É suportado o extrato Millennium BCP com texto selecionável; verifica se o PDF não é uma digitalização."};
-}
-
 async function parseFile(file){
- if(file.name.toLowerCase().endsWith(".pdf")){try{return await parseMillenniumPDF(file)}catch(e){return {rows:[],error:"Falha na leitura do PDF: "+e.message}}}
  const ext=file.name.toLowerCase().split(".").pop();
  if(ext==="csv"||ext==="txt")return parseCSVText(await file.text(),file.name);
  if((ext==="xlsx"||ext==="xls")&&window.XLSX){
@@ -798,7 +727,7 @@ async function parseFile(file){
      return all.length?{rows:all,error:null}:{rows:[],error:errors.join("<br>")||"Não encontrei dados transacionais."};
    }catch(err){return{rows:[],error:err.message||"Não foi possível ler o Excel."}}
  }
- return{rows:[],error:"Formato não suportado. Use CSV, Excel ou PDF Millennium BCP."};
+ return{rows:[],error:"Formato não suportado. Use CSV ou Excel (.xlsx/.xls)."};
 }
 let pendingImport=[];
 const REVIEW_LIMIT=500;
