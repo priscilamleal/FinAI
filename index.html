@@ -22,7 +22,7 @@
 <p class="sub">Selecione um ou vários ficheiros. O FinAI analisa os valores antes de os guardar.</p>
 <div class="drop">
 <input id="csv" type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" multiple onchange="updateSelectedFiles()">
-<p class="small">CSV, Excel (.xlsx/.xls) e PDF Millennium BCP</p>
+<p class="small">CSV (incluindo Revolut), Excel (.xlsx/.xls) e PDF Millennium BCP / Edenred</p>
 <div id="selectedFiles" class="selected-files"></div>
 <div style="display:flex;justify-content:center;margin-top:10px"><button type="button" class="btn danger" id="clearUploadBtn" onclick="clearSelectedFiles()" style="display:none">🗑️ Apagar ficheiros selecionados</button></div>
 </div>
@@ -637,7 +637,7 @@ function detectSchema(headers){
  return {
   date:findHeader(headers,["date","data","data movimento","data valor","transaction date","date of transaction"]),
   description:findHeader(headers,["description","descricao","descrição","descrição movimento","details","merchant","nome","movimento","referencia","referência"]),
-  amount:findHeader(headers,["amount","valor","valor movimento","transaction amount","montante"]),
+  amount:findHeader(headers,["amount","valor","valor movimento","transaction amount","montante","dinheiro a entrar/sair","money in/out","money in or out"]),
   debit:findHeader(headers,["debit","debito","débito","withdrawal","saida","saída"]),
   credit:findHeader(headers,["credit","credito","crédito","deposit","entrada","receita"]),
   account:findHeader(headers,["account","conta","account name","iban"])
@@ -647,7 +647,7 @@ function rowsFromObjects(rows,fileName){
  if(!rows.length)return{rows:[],error:"Sem linhas"};
  // Some bank spreadsheets have title/metadata rows before the real header.
  let headerIndex=-1, schema=null;
- const scan=Math.min(rows.length,40);
+ const scan=rows.length;
  for(let i=0;i<scan;i++){
    const hs=Object.keys(rows[i]||{});
    const candidate=detectSchema(hs);
@@ -676,30 +676,60 @@ function rowsFromObjects(rows,fileName){
    }
    if(amount===null)continue;
    let [cat,sub,merchant,method,confidence]=classify(desc);
+   // Revolut consolidated CSV: the export contains account summaries before the
+   // transaction table and uses "Dinheiro a entrar/sair" as its signed amount.
+   // Treat top-ups and metal conversions as internal movements, not income/expenses.
+   const movementType=String(o[findHeader(Object.keys(o),["categoria","tipo","type"]) ]||"").trim().toLowerCase();
+   const isRevolut=/revolut/i.test(fileName) || Object.keys(o).some(h=>normalizeHeader(h)==="dinheiro a entrar sair");
+   if(isRevolut && /^(carregar|top up|top-up)$/.test(movementType)){
+     cat="Transferências";sub="Carregamento de conta";method="Automática";confidence="Alta";
+   }else if(isRevolut && /^(cambio|câmbio|exchange|conversao|conversão)$/.test(movementType)){
+     cat="Transferências";sub="Conversão para investimento";method="Automática";confidence="Alta";
+   }else if(isRevolut && movementType==="comerciante" && cat==="Outros"){
+     // Keep unknown merchant purchases visible for manual classification.
+     sub="A identificar";
+   }
    if(cat==="Receitas")amount=Math.abs(amount);
-   const account=String(o[sc.account]||accountFromFile||"Conta principal").trim();
+   const account=String(o[sc.account]|| (isRevolut?"Revolut":accountFromFile||"Conta principal")).trim();
    out.push({date,description:desc,merchant:merchant||desc,amount,category:cat,subcategory:sub,account,sourceFile:fileName,aiConfidence:confidence||((cat==="Outros")?"Baixa":(method==="Personalizada"?"Muito alta":"Alta")),classificationMethod:method,manuallyConfirmed:false});
  }
  return{rows:out,error:null};
 }
 function rowsFromArrayRows(matrix,fileName){
  if(!matrix||!matrix.length)return{rows:[],error:"Folha vazia"};
- for(let hi=0;hi<Math.min(matrix.length,40);hi++){
-   const headers=(matrix[hi]||[]).map(x=>String(x??"").trim());
-   const sc=detectSchema(headers);
-   if(sc.date&&sc.description&&(sc.amount||sc.debit||sc.credit)){
-     const objs=matrix.slice(hi+1).map(row=>{const o={};headers.forEach((h,i)=>o[h]=row[i]??"");return o});
-     return rowsFromObjects([Object.fromEntries(headers.map(h=>[h,h])),...objs],fileName);
+ const norm=x=>normalizeHeader(x).replace(/[^\p{L}\p{N} ]/gu," ").replace(/\s+/g," ").trim();
+ let headerIndex=-1, headers=[], schema=null;
+ for(let hi=0;hi<matrix.length;hi++){
+   const candidate=(matrix[hi]||[]).map(x=>String(x??"").trim());
+   const sc=detectSchema(candidate);
+   // Require a real transaction-table header, not metadata such as "Data de abertura".
+   const hasDate=candidate.some(x=>["data","date","data movimento","transaction date"].includes(norm(x)));
+   const hasDescription=candidate.some(x=>["descricao","description","movimento","details"].includes(norm(x)));
+   const hasAmount=candidate.some(x=>["valor","montante","amount","dinheiro a entrar sair","money in out","money in or out"].includes(norm(x)));
+   if(sc.date&&sc.description&&(sc.amount||sc.debit||sc.credit)&&hasDate&&hasDescription&&hasAmount){
+     headerIndex=hi;headers=candidate;schema=sc;break;
    }
  }
- return{rows:[],error:"Não consegui localizar a linha de cabeçalho."};
+ if(headerIndex<0)return{rows:[],error:"Não consegui localizar a tabela de movimentos. Confirma se o CSV contém as colunas Data, Descrição e Valor."};
+ const data=[];
+ for(const row of matrix.slice(headerIndex+1)){
+   const obj={};headers.forEach((h,i)=>{if(h)obj[h]=row[i]??"";});data.push(obj);
+ }
+ // Supply a synthetic header object so the common transaction mapper can process all rows.
+ const headerObject={};headers.forEach(h=>{if(h)headerObject[h]=h;});
+ const result=rowsFromObjects([headerObject,...data],fileName);
+ if(result.error)return result;
+ // Revolut's export may not include the word Revolut in the filename.
+ const isRevolut=headers.some(h=>norm(h)==="dinheiro a entrar sair");
+ if(isRevolut)result.rows.forEach(x=>{if(!x.account||x.account==="Conta principal")x.account="Revolut";});
+ return result;
 }
 // Leitor CSV local: suporta BOM, separadores ; , e tabulação, campos entre aspas e quebras de linha.
 function parseCSVText(text,fileName){
  const source=String(text||'').replace(/^\uFEFF/,'').replace(/\r\n/g,'\n').replace(/\r/g,'\n');
  if(!source.trim())return {rows:[],error:'O ficheiro CSV está vazio.'};
  function countDelimiter(line,delimiter){let q=false,n=0;for(let i=0;i<line.length;i++){if(line[i]==='"'){if(q&&line[i+1]==='"'){i++;continue;}q=!q;}else if(!q&&line[i]===delimiter)n++;}return n;}
- const sample=source.split('\n').filter(x=>x.trim()).slice(0,12);
+ const sample=source.split('\n').filter(x=>x.trim()).slice(0,120);
  const delimiters=[';',',','\t'];
  const delimiter=delimiters.map(d=>({d,n:sample.reduce((a,l)=>a+countDelimiter(l,d),0)})).sort((a,b)=>b.n-a.n)[0].d;
  const matrix=[];let row=[],field='',quoted=false;
@@ -807,7 +837,7 @@ async function parseFile(file){
      return all.length?{rows:all,error:null}:{rows:[],error:errors.join("<br>")||"Não encontrei dados transacionais."};
    }catch(err){return{rows:[],error:err.message||"Não foi possível ler o Excel."}}
  }
- return{rows:[],error:"Formato não suportado. Use CSV, Excel ou PDF Millennium BCP."};
+ return{rows:[],error:"Formato não suportado. Use CSV, Excel, PDF Millennium BCP ou PDF MyEdenred."};
 }
 let pendingImport=[];
 const REVIEW_LIMIT=500;
