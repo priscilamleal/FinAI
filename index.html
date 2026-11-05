@@ -46,8 +46,8 @@ function save(){localStorage.setItem("finai_tx",JSON.stringify(tx));localStorage
 function eur(n){return new Intl.NumberFormat("pt-PT",{style:"currency",currency:"EUR"}).format(n)}
 function month(d){return String(d).slice(0,7)}
 function absSum(a){return a.reduce((s,x)=>s+Math.abs(Number(x.amount)||0),0)}
-function exp(a){return a.filter(x=>Number(x.amount)<0)}
-function inc(a){return a.filter(x=>Number(x.amount)>0)}
+function exp(a){return a.filter(x=>Number(x.amount)<0 && x.category!=="Transferências")}
+function inc(a){return a.filter(x=>Number(x.amount)>0 && x.category!=="Transferências")}
 function head(title,sub,action=""){return `<div class="top"><div><div class="title">${title}</div><div class="sub">${sub}</div></div>${action}</div>`}
 
 let reportMonth = localStorage.getItem("finai_report_month") || "";
@@ -200,7 +200,7 @@ function renderTable(){
  <td>${x.date}</td><td><b>${x.merchant}</b><br><span class="small">${x.description}</span></td>
  <td class="${x.amount<0?"red":"green"}">${x.amount<0?"-":""}${eur(Math.abs(x.amount))}</td>
  <td><select class="select" onchange="editTx(${x._i},'category',this.value)">
- ${["Casa","Alimentação","Transportes","Lazer","Shopping","Saúde","Profissional","Financeiro","Viagens","Doações","Receitas","Serviços","Outros"].map(v=>`<option ${v==x.category?"selected":""}>${v}</option>`).join("")}</select></td>
+ ${["Casa","Alimentação","Transportes","Lazer","Shopping","Saúde","Profissional","Financeiro","Viagens","Doações","Receitas","Serviços","Finanças","Tecnologia","Transferências","Outros"].map(v=>`<option ${v==x.category?"selected":""}>${v}</option>`).join("")}</select></td>
  <td><input class="input" style="width:125px" value="${x.subcategory}" onchange="editTx(${x._i},'subcategory',this.value)"></td>
  <td><span class="tag">${x.aiConfidence||"Alta"}</span></td>
  <td><button class="btn secondary" onclick="saveMerchantRule(${x._i})">Guardar memória</button> <button class="btn danger" onclick="deleteTx(${x._i})">🗑️</button></td>
@@ -310,7 +310,7 @@ async function importClassificationsFile(input){
  const file=input.files&&input.files[0];if(!file)return;
  try{
   const entries=parseClassificationCsv(await file.text());if(!entries.length)throw new Error("O ficheiro não contém classificações válidas.");
-  const allowed=["Casa","Alimentação","Transportes","Lazer","Shopping","Saúde","Profissional","Financeiro","Viagens","Doações","Receitas","Serviços","Outros"];
+  const allowed=["Casa","Alimentação","Transportes","Lazer","Shopping","Saúde","Profissional","Financeiro","Viagens","Doações","Receitas","Serviços","Finanças","Tecnologia","Transferências","Outros"];
   const rules=JSON.parse(localStorage.getItem("finai_rules")||"{}");let imported=0,applied=0;
   for(const e of entries){
    const category=allowed.find(v=>aiKey(v)===aiKey(e.category));if(!category)continue;
@@ -389,7 +389,7 @@ function analysis(){
  const allMonths=availableMonths();
  const current=tx.filter(x=>month(x.date)===m);
  const comparisonTx=tx.filter(x=>selected.includes(month(x.date)));
- const isInternalTransfer=x=>/transfer[eê]ncia (?:enviada|recebida)|transfer[eê]ncia recebida|transfer[eê]ncia enviada/i.test(String(x.subcategory||""))||/\btrf\b|transfer[eê]ncia/i.test(String(x.description||""))&&String(x.category||"")==="Financeiro";
+ const isInternalTransfer=x=>String(x.category||"")==="Transferências"||/entre contas próprias|carregamento de benefício/i.test(String(x.subcategory||""))||/transfer[eê]ncia (?:enviada|recebida)|transfer[eê]ncia recebida|transfer[eê]ncia enviada/i.test(String(x.subcategory||""))||/\btrf\b|transfer[eê]ncia/i.test(String(x.description||""))&&String(x.category||"")==="Financeiro";
  const expenseRows=arr=>arr.filter(x=>Number(x.amount)<0&&!isInternalTransfer(x));
  const incomeRows=arr=>arr.filter(x=>Number(x.amount)>0&&String(x.category||"")==="Receitas"&&!/transfer[eê]ncia/i.test(String(x.subcategory||"")));
  const totalExpenses=arr=>absSum(expenseRows(arr));
@@ -551,6 +551,12 @@ function classify(s){
  const hay=(t+" "+merchant.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g," ")).replace(/\s+/g," ");
  const installment=raw.match(/\bprestação\s*n[ºo°]?\s*(\d+)\s*-?\s*contrato\s*([\w-]+)/i);
  if(installment) return ["Financeiro","Prestação de crédito",`Prestação nº ${installment[1]}`,"Automática","Alta"];
+ if(/DD VOLKSWAGEN REN PT43103335|DD VOLKSWAGEN REN\b/i.test(raw)) return ["Transportes","Renting automóvel","Volkswagen Renting","Regra confirmada","Muito alta"];
+ if(/TRF P\/ PRISCILA MOTA LEAL|TRF MB WAY P\/ MARCELLO LEAL/i.test(raw)) return ["Transferências","Entre contas próprias","Transferência entre contas próprias","Regra confirmada","Muito alta"];
+ if(/COM\.MAN\.CONTA PACOTE MILLENNIUM GO|IMPOSTO SELO ART 17\.3\.4/i.test(raw)) return ["Finanças","Manutenção de conta bancária","Millennium BCP","Regra confirmada","Muito alta"];
+ if(/OPENAI\s*\*?\s*CHATGPT|CHATGPT SUBSCR/i.test(raw)) return ["Tecnologia","Software e subscrições","ChatGPT","Regra confirmada","Muito alta"];
+ if(/SENT MONEY TO SILVANA MARIA MONTEIRO NIEL/i.test(raw)) return ["Saúde","Terapia","Terapia","Regra confirmada","Muito alta"];
+ if(/TRANSFER[EÊ]NCIA BANC[AÁ]RIA/i.test(raw)) return ["Transferências","Carregamento de benefício","Transferência bancária","Automática","Alta"];
  const learned=findSavedMerchantRule(raw,merchant,rules);
  if(learned) return [learned.category,learned.subcategory,learned.merchantName||merchant,"Personalizada","Muito alta"];
  const checks=[
@@ -564,6 +570,8 @@ function classify(s){
   [/feira\s*viva|arena\s*atlantico|meo\s*arena/, ["Lazer","Eventos","Alta"]],
   [/bokkusu/, ["Lazer","Hobbies","Alta"]],
   [/grupo\s*golgota/, ["Doações","Associação/Religião","Alta"]],
+  [/manteigaria|my break delta/, ["Alimentação","Café e pastelaria","Alta"]],
+  [/pizzaria famiglia|rest picc[oó]lo|restaurante piccolo|fogo de ch[aã]o|rest espelho gauch/, ["Alimentação","Restaurante","Alta"]],
   [/pingo doce|mercadona|continente|lidl|aldi|auchan|intermarche|minipreco|supermercado|mercadinho|mercearia|papel\s*amanhecer|a\s*super\s*2000/, ["Alimentação","Mercado","Alta"]],
   [/uber eats|glovo|bolt food|takeaway|just eat/, ["Alimentação","Delivery","Alta"]],
   [/restaurante|restaurant|taberna|tasca|hamburguer|pizza|sushi|mcdonald|burger king|starbucks|cafe|padaria|pastelaria|snack|churrasqueira|marisqueira|ramen/, ["Alimentação","Restaurante","Alta"]],
@@ -744,67 +752,49 @@ function parseExcelInWorker(file){
 
 // Importação de PDF Millennium BCP. Agrupa texto por linha e usa a variação
 // do saldo para determinar o valor/sinal, evitando confundir saldo com movimento.
-async function parseMillenniumPDF(file){
- if(!window.pdfjsLib)return {rows:[],error:"O leitor de PDF não carregou. Verifica a ligação à Internet."};
- pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
- const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
- const rows=[]; let year=null,statementMonth=null,prevBalance=null,mainAccount=false;
- const money=s=>{
-   let v=String(s).replace(/[€\s]/g,"").replace(/\.(?=\d{3}(?:\D|$))/g,"").replace(",",".");
-   if(!/^-?\d+(?:\.\d{2})?$/.test(v))return NaN;
-   return Number(v);
- };
- for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
-   const page=await pdf.getPage(pageNo), content=await page.getTextContent();
-   const items=content.items.filter(i=>String(i.str||"").trim()).map(i=>({x:i.transform[4],y:i.transform[5],s:String(i.str).trim()})).sort((a,b)=>b.y-a.y||a.x-b.x);
-   const lines=[];
-   for(const it of items){
-     let line=lines.find(l=>Math.abs(l.y-it.y)<=1.8);
-     if(!line){line={y:it.y,parts:[]};lines.push(line);}
-     line.parts.push(it);
-   }
-   lines.sort((a,b)=>b.y-a.y);
-   for(const line of lines){
-     const p=line.parts.sort((a,b)=>a.x-b.x);
-     const text=p.map(v=>v.s).join(" ").replace(/\s+/g," ").trim();
-     const period=text.match(/EXTRATO\s+DE\s+(20\d{2})\/(\d{2})\/\d{2}\s+A\s+20\d{2}\/\d{2}\/\d{2}/i);
-     if(period){year=Number(period[1]);statementMonth=Number(period[2]);mainAccount=true;prevBalance=null;continue;}
-     if(/CONTA\s+APPARTE|APLICACOES\s+FINANCEIRAS/i.test(text)){mainAccount=false;continue;}
-     if(!mainAccount||!year)continue;
-     if(/SALDO\s+INICIAL/i.test(text)){
-       const balParts=p.filter(v=>v.x>500).map(v=>v.s);
-       const b=money(balParts.join(" "));
-       if(Number.isFinite(b))prevBalance=b;
-       continue;
-     }
-     if(/TRANSPORTE|A\s+TRANSPORTAR|SALDO\s+FINAL|SALDO\s+DISPONIVEL/i.test(text))continue;
-     // Data de lançamento e data-valor: DD.MM DD.MM (por vezes com espaços).
-     const dateMatch=text.match(/^\s*(\d{1,2})\.(\d{2})\s+(\d{1,2})\.(\d{2})\s+/);
-     if(!dateMatch||prevBalance===null)continue;
-     const month=Number(dateMatch[1]), day=Number(dateMatch[2]);
-     if(day<1||day>31||month<1||month>12)continue;
-     // O saldo é a última coluna (x >= 500); pode vir dividido em "1" + "333.26".
-     const balanceParts=p.filter(v=>v.x>=500).map(v=>v.s);
-     const balance=money(balanceParts.join(" "));
-     if(!Number.isFinite(balance))continue;
-     const delta=Math.round((balance-prevBalance)*100)/100;
-     if(Math.abs(delta)<0.005){prevBalance=balance;continue;}
-     // Descrição fica depois das duas datas e antes da coluna de débito.
-     const desc=p.filter(v=>v.x>=108&&v.x<345).map(v=>v.s).join(" ").replace(/\s+/g," ").trim();
-     if(!desc||/^(SALDO|TRANSPORTE)/i.test(desc)){prevBalance=balance;continue;}
-     // Excluir cabeçalhos/linhas informativas e movimentos sem descrição.
-     const description=desc.replace(/\s+/g," ").trim();
-     const date=`${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-     const [cat,sub,merchant,method,confidence]=classify(description);
-     rows.push({date,description,merchant:merchant||description,amount:delta,category:cat,subcategory:sub,account:"Millennium BCP",sourceFile:file.name,aiConfidence:confidence||"Baixa",classificationMethod:method,manuallyConfirmed:false});
-     prevBalance=balance;
-   }
- }
- return rows.length?{rows,error:null}:{rows:[],error:"Não consegui extrair movimentos deste PDF. Confirma que é um extrato Millennium BCP com texto selecionável."};
+async function pdfPageLines(page){
+ const content=await page.getTextContent(),items=content.items.filter(i=>String(i.str||"").trim()).map(i=>({x:i.transform[4],y:i.transform[5],s:String(i.str).trim()})).sort((a,b)=>b.y-a.y||a.x-b.x),lines=[];
+ for(const it of items){let l=lines.find(x=>Math.abs(x.y-it.y)<=2.2);if(!l){l={y:it.y,parts:[]};lines.push(l)}l.parts.push(it)}
+ return lines.sort((a,b)=>b.y-a.y).map(l=>({parts:l.parts.sort((a,b)=>a.x-b.x),text:l.parts.map(x=>x.s).join(" ").replace(/\s+/g," ").trim()}));
 }
-
+function pdfMoney(s){let v=String(s||"").replace(/[€\s]/g,"").replace(/\.(?=\d{3}(?:\D|$))/g,"").replace(",",".").replace(/[^\d.+-]/g,"");const n=Number(v);return Number.isFinite(n)?n:NaN}
+async function parseMillenniumPDF(file){
+ if(!window.pdfjsLib)return {rows:[],error:"O leitor de PDF não carregou."};
+ pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+ const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise,rows=[];let year=null,prevBalance=null,main=true;
+ for(let pn=1;pn<=pdf.numPages;pn++)for(const line of await pdfPageLines(await pdf.getPage(pn))){
+  const p=line.parts,t=line.text,period=t.match(/EXTRATO\s+DE\s+(20\d{2})\/(\d{2})\/\d{2}\s+A\s+20\d{2}\/\d{2}\/\d{2}/i);
+  if(period){year=+period[1];main=true;prevBalance=null;continue}
+  if(/CONTA\s+APPARTE|APLICACOES\s+FINANCEIRAS/i.test(t)){main=false;continue}
+  if(!main||!year)continue;
+  if(/SALDO\s+INICIAL/i.test(t)){const z=pdfMoney(p.filter(v=>v.x>500).map(v=>v.s).join(" "));if(Number.isFinite(z))prevBalance=z;continue}
+  if(/TRANSPORTE|A\s+TRANSPORTAR|SALDO\s+FINAL|SALDO\s+DISPONIVEL/i.test(t))continue;
+  const d=t.match(/^\s*(\d{1,2})\.(\d{2})\s+(\d{1,2})\.(\d{2})\s+/);if(!d||prevBalance===null)continue;
+  const mo=+d[1],day=+d[2];if(mo<1||mo>12||day<1||day>31)continue;
+  const bal=pdfMoney(p.filter(v=>v.x>=500).map(v=>v.s).join(" "));if(!Number.isFinite(bal))continue;
+  const amount=Math.round((bal-prevBalance)*100)/100,desc=p.filter(v=>v.x>=108&&v.x<345).map(v=>v.s).join(" ").trim();
+  if(desc&&Math.abs(amount)>=.005){const date=year+"-"+String(mo).padStart(2,"0")+"-"+String(day).padStart(2,"0"),c=classify(desc);
+   rows.push({date,description:desc,merchant:c[2]||desc,amount,category:c[0],subcategory:c[1],account:"Millennium BCP",sourceFile:file.name,aiConfidence:c[4]||"Baixa",classificationMethod:c[3],manuallyConfirmed:false})}
+  prevBalance=bal;
+ }
+ return rows.length?{rows,error:null}:{rows:[],error:"Não consegui extrair movimentos deste PDF Millennium BCP."};
+}
+async function parseEdenredPDF(file){
+ if(!window.pdfjsLib)return {rows:[],error:"O leitor de PDF não carregou."};
+ pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+ const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise,rows=[];
+ for(let pn=1;pn<=pdf.numPages;pn++)for(const line of await pdfPageLines(await pdf.getPage(pn))){
+  const d=line.text.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+às\s+(\d{2}):(\d{2})/i);if(!d)continue;
+  const p=line.parts,ix=p.findIndex(v=>/[+-]?\s*[\d.]+,\d{2}\s*€/.test(v.s));if(ix<0)continue;
+  const amount=pdfMoney(p[ix].s);if(!Number.isFinite(amount)||!amount)continue;
+  let desc=p.filter(v=>v.x>=180&&v.x<510&&v!==p[ix]).map(v=>v.s).join(" ").replace(/\s+/g," ").trim().replace(/^Compra:\s*/i,"");if(!desc)continue;
+  const c=classify(desc),date=d[3]+"-"+d[2]+"-"+d[1];
+  rows.push({date,description:desc,merchant:c[2]||desc,amount,category:c[0],subcategory:c[1],account:"Edenred",sourceFile:file.name,aiConfidence:c[4]||"Baixa",classificationMethod:c[3],manuallyConfirmed:false});
+ }
+ return rows.length?{rows,error:null}:{rows:[],error:"Não encontrei movimentos Edenred no PDF."};
+}
 async function parseFile(file){
- if(file.name.toLowerCase().endsWith(".pdf")){try{return await parseMillenniumPDF(file)}catch(e){return {rows:[],error:"Falha na leitura do PDF: "+e.message}}}
+ if(file.name.toLowerCase().endsWith(".pdf")){try{return /edenred|myedenred/i.test(file.name)?await parseEdenredPDF(file):await parseMillenniumPDF(file)}catch(e){return {rows:[],error:"Falha na leitura do PDF: "+e.message}}}
  const ext=file.name.toLowerCase().split(".").pop();
  if(ext==="csv"||ext==="txt")return parseCSVText(await file.text(),file.name);
  if((ext==="xlsx"||ext==="xls")&&window.XLSX){
