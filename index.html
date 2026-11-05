@@ -44,7 +44,10 @@ let editingAsset = null;
 let editingGoal = null;
 function save(){localStorage.setItem("finai_tx",JSON.stringify(tx));localStorage.setItem("finai_assets",JSON.stringify(assets));localStorage.setItem("finai_goals",JSON.stringify(goals))}
 function eur(n){return new Intl.NumberFormat("pt-PT",{style:"currency",currency:"EUR"}).format(n)}
-function month(d){return String(d).slice(0,7)}
+function month(d){
+ const s=String(d||"").trim();
+ return /^20\\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$/.test(s)?s.slice(0,7):"";
+}
 function absSum(a){return a.reduce((s,x)=>s+Math.abs(Number(x.amount)||0),0)}
 function exp(a){return a.filter(x=>Number(x.amount)<0 && x.category!=="Transferências")}
 function inc(a){return a.filter(x=>Number(x.amount)>0 && x.category!=="Transferências")}
@@ -80,11 +83,11 @@ function toggleCompareMonth(v, checked){
 function monthPicker(page){
  const ms=availableMonths();ensureReportSelection();
  return `<div class="toolbar" style="align-items:center;margin-bottom:14px">
- <label class="small"><b>Mês analisado</b></label>
+ <label class="small"><b>Mês para detalhe</b></label>
  <select class="select" onchange="setReportMonth(this.value)">
  ${ms.map(m=>`<option value="${m}" ${m==reportMonth?"selected":""}>${m}</option>`).join("")}
  </select>
- ${page==="dashboard"?`<span class="small">Os indicadores e insights abaixo usam este mês.</span>`:""}
+ ${page==="dashboard"?`<span class="small">Os detalhes e gráficos abaixo usam o mês selecionado. Os totais principais são acumulados.</span>`:""}
  </div>`;
 }
 function comparisonAverage(baseMonth, subcategory){
@@ -134,25 +137,30 @@ async function driveConnectAndDownload(){try{if(!confirm("Restaurar do Google Dr
 
 function dashboard(){
  ensureReportSelection();
- const m=reportMonth, a=tx.filter(x=>month(x.date)==m), e=absSum(exp(a)), i=absSum(inc(a)), assetsTotal=assets.reduce((s,x)=>s+Number(x.value),0);
+ const today=new Date().toISOString().slice(0,10);
+ const allToDate=tx.filter(x=>/^20\\d{2}-\\d{2}-\\d{2}$/.test(String(x.date||"")) && x.date<=today);
+ const m=reportMonth, a=tx.filter(x=>month(x.date)===m && x.date<=today);
+ const e=absSum(exp(allToDate)), i=absSum(inc(allToDate)), assetsTotal=assets.reduce((s,x)=>s+Number(x.value),0);
+ const monthExpenses=absSum(exp(a)), monthIncome=absSum(inc(a));
  const cats={};exp(a).forEach(x=>cats[x.subcategory]=(cats[x.subcategory]||0)+Math.abs(x.amount));
  const rest=absSum(exp(a).filter(x=>x.subcategory=="Restaurante"));
  const selected=reportCompare.filter(x=>x!==m);
- const hist=tx.filter(x=>x.subcategory=="Restaurante"&&selected.includes(month(x.date)));
+ const hist=tx.filter(x=>x.subcategory=="Restaurante"&&selected.includes(month(x.date))&&x.date<=today);
  const hm=[...new Set(hist.map(x=>month(x.date)))]; const av=hm.length?absSum(hist)/hm.length:0;
- return head("Dashboard","Visão geral — mês selecionável",`<button class="btn" onclick="openModal()">＋ Importar extrato</button>`)+
+ return head("Dashboard","Visão geral — totais acumulados até hoje",`<button class="btn" onclick="openModal()">＋ Importar extrato</button>`)+
  monthPicker("dashboard")+
  driveCard()+
  `<div class="grid">
- <div class="card"><div class="label">Receitas em ${m}</div><div class="metric green">${eur(i)}</div></div>
- <div class="card"><div class="label">Despesas em ${m}</div><div class="metric red">${eur(e)}</div></div>
- <div class="card"><div class="label">Poupança em ${m}</div><div class="metric">${eur(i-e)}</div></div>
+ <div class="card"><div class="label">Receitas acumuladas até hoje</div><div class="metric green">${eur(i)}</div></div>
+ <div class="card"><div class="label">Despesas acumuladas até hoje</div><div class="metric red">${eur(e)}</div></div>
+ <div class="card"><div class="label">Poupança acumulada até hoje</div><div class="metric">${eur(i-e)}</div></div>
  <div class="card"><div class="label">Ativos financeiros</div><div class="metric">${eur(assetsTotal)}</div></div></div>
  <div class="section card"><h2>🔎 Revisão</h2><div class="row"><span>Transações sem classificação clara</span><b class="${tx.filter(x=>x.category=="Outros").length?"orange":"green"}">${tx.filter(x=>x.category=="Outros").length}</b></div></div>
- <div class="section two"><div class="card"><h2>Gastos por subcategoria — ${m}</h2>
+ <div class="section two"><div class="card"><h2>Gastos por subcategoria — ${m||"sem mês selecionado"}</h2>
+ <div class="small">Receitas: ${eur(monthIncome)} · Despesas: ${eur(monthExpenses)} · Poupança: ${eur(monthIncome-monthExpenses)}</div>
  ${Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="row"><span>${k}</span><b>${eur(v)}</b></div>`).join("")}</div>
  <div class="card"><h2>🧠 Insights</h2>
- ${rest&&av&&rest>av*1.2?`<div class="insight"><b>⚠️ Restaurantes acima da média</b>Você gastou ${eur(rest)} em ${m}. A média dos meses selecionados é ${eur(av)}.</div>`:`<div class="insight"><b>✓ Comparação de ${m}</b>${selected.length?`Este mês está sendo comparado com ${selected.length} mês(es) selecionado(s).`:`Selecione outros meses para ativar comparações.`}</div>`}
+ ${rest&&av&&rest>av*1.2?`<div class="insight"><b>⚠️ Restaurantes acima da média</b>Você gastou ${eur(rest)} em ${m}. A média dos meses selecionados é ${eur(av)}.</div>`:`<div class="insight"><b>✓ Comparação de ${m||"mês"}</b>${selected.length?`Este mês está sendo comparado com ${selected.length} mês(es) selecionado(s).`:`Selecione outros meses para ativar comparações.`}</div>`}
  <div class="insight"><b>📌 Classificação automática</b>Pingo Doce → Alimentação › Mercado; EDP → Casa › Eletricidade; Uber Eats → Alimentação › Delivery.</div>
  </div></div>`;
 }
@@ -814,14 +822,27 @@ async function parseEdenredPDF(file){
  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise,rows=[];
  for(let pn=1;pn<=pdf.numPages;pn++)for(const line of await pdfPageLines(await pdf.getPage(pn))){
-  const d=line.text.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+às\s+(\d{2}):(\d{2})/i);if(!d)continue;
-  const p=line.parts,ix=p.findIndex(v=>/[+-]?\s*[\d.]+,\d{2}\s*€/.test(v.s));if(ix<0)continue;
-  const amount=pdfMoney(p[ix].s);if(!Number.isFinite(amount)||!amount)continue;
-  let desc=p.filter(v=>v.x>=180&&v.x<510&&v!==p[ix]).map(v=>v.s).join(" ").replace(/\s+/g," ").trim().replace(/^Compra:\s*/i,"");if(!desc)continue;
-  const c=classify(desc),date=d[3]+"-"+d[2]+"-"+d[1];
+  const p=line.parts;
+  const datePart=p.find(v=>/\d{2}\/\d{2}\/\d{4}\s+às\s+\d{2}:\d{2}/i.test(v.s));
+  if(!datePart)continue;
+  const d=datePart.s.match(/(\d{2})\/(\d{2})\/(\d{4})\s+às\s+(\d{2}):(\d{2})/i);if(!d)continue;
+  const candidates=p.filter(v=>v!==datePart&&/[+-]?\s*[\d.]+,\d{2}\s*€/.test(v.s));
+  if(!candidates.length)continue;
+  const amountPart=candidates.sort((a,b)=>a.x-b.x)[0];
+  const amount=pdfMoney(amountPart.s);if(!Number.isFinite(amount)||!amount)continue;
+  let desc=p.filter(v=>v.x>datePart.x+20&&v.x<amountPart.x-5&&v!==amountPart)
+    .map(v=>v.s).join(" ").replace(/\s+/g," ").trim().replace(/^Compra:\s*/i,"");
+  if(!desc){
+   const dateIndex=p.indexOf(datePart),amountIndex=p.indexOf(amountPart);
+   desc=p.slice(dateIndex+1,amountIndex).map(v=>v.s).join(" ").replace(/\s+/g," ").trim().replace(/^Compra:\s*/i,"");
+  }
+  if(!desc)continue;
+  const isTransfer=/transfer[eê]ncia banc[aá]ria/i.test(desc);
+  const c=isTransfer?["Transferências","Carregamento de benefício","Transferência Edenred","Automática","Alta"]:classify(desc);
+  const date=d[3]+"-"+d[2]+"-"+d[1];
   rows.push({date,description:desc,merchant:c[2]||desc,amount,category:c[0],subcategory:c[1],account:"Edenred",sourceFile:file.name,aiConfidence:c[4]||"Baixa",classificationMethod:c[3],manuallyConfirmed:false});
  }
- return rows.length?{rows,error:null}:{rows:[],error:"Não encontrei movimentos Edenred no PDF."};
+ return rows.length?{rows,error:null}:{rows:[],error:"Não encontrei movimentos Edenred no PDF. Confirma se o PDF contém texto selecionável e se as datas/valores estão visíveis."};
 }
 async function parseFile(file){
  if(file.name.toLowerCase().endsWith(".pdf")){try{return /edenred|myedenred/i.test(file.name)?await parseEdenredPDF(file):await parseMillenniumPDF(file)}catch(e){return {rows:[],error:"Falha na leitura do PDF: "+e.message}}}
