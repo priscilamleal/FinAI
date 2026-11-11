@@ -29,6 +29,7 @@
 <div id="importStatus" style="margin-top:12px"></div><div id="importPreview" style="margin-top:12px"></div>
 <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:15px"><button class="btn secondary" onclick="closeModal()">Cancelar</button><button class="btn" id="importBtn" onclick="importFiles()">Analisar ficheiros</button></div>
 </div></div>
+<div class="modal" id="manualTxModal"><div class="modalbox" style="max-width:620px"><div style="display:flex;justify-content:space-between;align-items:center"><h2 id="manualTxTitle" style="margin:0">＋ Adicionar transação</h2><button class="btn secondary" onclick="closeManualTransaction()">✕</button></div><p class="sub">Regista uma receita ou despesa no armazenamento local do FinAI.</p><input type="hidden" id="manualTxIndex"><div class="edit-form-grid" style="margin-top:14px"><div class="edit-field"><label for="manualTxDate">Data</label><input class="input" id="manualTxDate" type="date" required></div><div class="edit-field"><label for="manualTxType">Tipo</label><select class="select" id="manualTxType"><option value="expense">Despesa</option><option value="income">Receita</option></select></div><div class="edit-field"><label for="manualTxAmount">Valor (€)</label><input class="input" id="manualTxAmount" type="number" min="0.01" step="0.01" placeholder="0,00" required></div><div class="edit-field"><label for="manualTxDescription">Descrição</label><input class="input" id="manualTxDescription" maxlength="200" required></div><div class="edit-field"><label for="manualTxMerchant">Comerciante (opcional)</label><input class="input" id="manualTxMerchant" maxlength="120"></div><div class="edit-field"><label for="manualTxCategory">Categoria</label><select class="select" id="manualTxCategory"><option>Casa</option><option>Alimentação</option><option>Transportes</option><option>Lazer</option><option>Shopping</option><option>Saúde</option><option>Profissional</option><option>Financeiro</option><option>Viagens</option><option>Doações</option><option>Receitas</option><option>Serviços</option><option>Finanças</option><option>Tecnologia</option><option>Transferências</option><option>Outros</option></select></div><div class="edit-field"><label for="manualTxSubcategory">Subcategoria</label><input class="input" id="manualTxSubcategory" maxlength="120" required></div></div><div id="manualTxError" class="red" role="alert" style="margin-top:10px"></div><div class="edit-actions"><button class="btn secondary" onclick="closeManualTransaction()">Cancelar</button><button class="btn" onclick="saveManualTransaction()">Guardar transação</button></div></div></div>
 <input id="backupFile" type="file" accept=".json,application/json" style="display:none" onchange="restoreBackup(this)">
 
 <script>
@@ -292,7 +293,7 @@ function clearTransactionHistory(){
  alert("Histórico de transações limpo. As regras de classificação, investimentos e objetivos foram mantidos.");
 }
 function transactions(){
-return head("Transações","Pesquise, reveja e corrija as classificações",`<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn secondary" onclick="exportBackup()">⬇️ Guardar cópia</button><button class="btn secondary" onclick="document.getElementById('backupFile').click()">⬆️ Restaurar cópia</button><button class="btn danger-outline" onclick="clearTransactionHistory()">🧹 Limpar histórico</button><button class="btn" onclick="openModal()">＋ Importar extratos</button></div>`)+
+return head("Transações","Pesquise, reveja e corrija as classificações",`<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn secondary" onclick="exportBackup()">⬇️ Guardar cópia</button><button class="btn secondary" onclick="document.getElementById('backupFile').click()">⬆️ Restaurar cópia</button><button class="btn danger-outline" onclick="clearTransactionHistory()">🧹 Limpar histórico</button><button class="btn secondary" onclick="openManualTransaction()">＋ Adicionar transação</button><button class="btn" onclick="openModal()">＋ Importar extratos</button></div>`)+
 `<div class="card"><div class="toolbar">
 <input class="input" id="q" placeholder="Pesquisar comerciante ou descrição..." oninput="renderTable()">
 <button class="btn secondary" id="memoryBtn" onclick="applySavedMemory()">🔁 Aplicar memória</button>
@@ -315,8 +316,41 @@ function renderTable(){
  ${["Casa","Alimentação","Transportes","Lazer","Shopping","Saúde","Profissional","Financeiro","Viagens","Doações","Receitas","Serviços","Finanças","Tecnologia","Transferências","Outros"].map(v=>`<option ${v==x.category?"selected":""}>${v}</option>`).join("")}</select></td>
  <td><input class="input" style="width:125px" value="${x.subcategory}" onchange="editTx(${x._i},'subcategory',this.value)"></td>
  <td><span class="tag">${x.aiConfidence||"Alta"}</span></td>
- <td><button class="btn secondary" onclick="saveMerchantRule(${x._i})">Guardar memória</button> <button class="btn danger" onclick="deleteTx(${x._i})">🗑️</button></td>
+ <td>${x.sourceFile==="Lançamento manual"?`<button class="btn secondary" onclick="openManualTransaction(${x._i})">Editar</button> `:""}<button class="btn secondary" onclick="saveMerchantRule(${x._i})">Guardar memória</button> <button class="btn danger" onclick="deleteTx(${x._i})">🗑️</button></td>
  </tr>`).join("");
+}
+function openManualTransaction(index=null){
+ const current=index===null?null:tx[index];
+ const modal=document.getElementById("manualTxModal");
+ document.getElementById("manualTxTitle").textContent=current?"✏️ Editar transação":"＋ Adicionar transação";
+ document.getElementById("manualTxIndex").value=index===null?"":String(index);
+ document.getElementById("manualTxDate").value=current?.date||new Date().toISOString().slice(0,10);
+ document.getElementById("manualTxDescription").value=current?.description||"";
+ document.getElementById("manualTxMerchant").value=current?.merchant||current?.description||"";
+ document.getElementById("manualTxAmount").value=current?String(Math.abs(Number(current.amount))):"";
+ document.getElementById("manualTxType").value=current&&Number(current.amount)>0?"income":"expense";
+ document.getElementById("manualTxCategory").value=current?.category||(current&&Number(current.amount)>0?"Receitas":"Outros");
+ document.getElementById("manualTxSubcategory").value=current?.subcategory||"";
+ document.getElementById("manualTxError").textContent="";
+ document.getElementById("manualTxCategory").onchange=function(){if(this.value==="Receitas")document.getElementById("manualTxType").value="income"};
+ modal.classList.add("show");
+}
+function closeManualTransaction(){document.getElementById("manualTxModal").classList.remove("show")}
+function saveManualTransaction(){
+ const date=document.getElementById("manualTxDate").value;
+ const description=document.getElementById("manualTxDescription").value.trim();
+ const merchant=document.getElementById("manualTxMerchant").value.trim()||description;
+ const amount=Number(document.getElementById("manualTxAmount").value);
+ const type=document.getElementById("manualTxType").value;
+ const category=document.getElementById("manualTxCategory").value;
+ const subcategory=document.getElementById("manualTxSubcategory").value.trim();
+ const error=document.getElementById("manualTxError");
+ if(!date||!description||!Number.isFinite(amount)||amount<=0||!category||!subcategory){error.textContent="Preencha a data, descrição, valor positivo, categoria e subcategoria.";return}
+ const index=document.getElementById("manualTxIndex").value;
+ const existing=index===""?null:tx[Number(index)];
+ const record={date,description,merchant,amount:type==="income"?amount:-amount,category,subcategory,account:existing?.account||"Manual",sourceFile:"Lançamento manual",aiConfidence:"Confirmada",classificationMethod:"Manual",manuallyConfirmed:true};
+ if(index==="")tx.push(record);else tx[Number(index)]={...existing,...record};
+ save();closeManualTransaction();render("transactions");
 }
 function editTx(i,key,value){tx[i][key]=value;tx[i].manuallyConfirmed=true;tx[i].aiConfidence="Confirmada";save();render("transactions")}
 function deleteTx(i){if(confirm("Apagar esta transação?")){tx.splice(i,1);save();render("transactions")}}
