@@ -45,10 +45,15 @@ let editingAsset = null;
 let editingGoal = null;
 function save(){localStorage.setItem("finai_tx",JSON.stringify(tx));localStorage.setItem("finai_assets",JSON.stringify(assets));localStorage.setItem("finai_goals",JSON.stringify(goals))}
 function eur(n){return new Intl.NumberFormat("pt-PT",{style:"currency",currency:"EUR"}).format(n)}
-function month(d){
- const s=String(d||"").trim();
- return /^20\\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$/.test(s)?s.slice(0,7):"";
+function dateISO(d){
+ const s=String(d||"").trim();let y,m,day,match;
+ if((match=s.match(/^(\d{4})-(\d{2})-(\d{2})$/))){y=+match[1];m=+match[2];day=+match[3]}
+ else if((match=s.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/))){day=+match[1];m=+match[2];y=+match[3]}
+ else return "";
+ const date=new Date(Date.UTC(y,m-1,day));
+ return date.getUTCFullYear()===y&&date.getUTCMonth()===m-1&&date.getUTCDate()===day?`${String(y).padStart(4,"0")}-${String(m).padStart(2,"0")}-${String(day).padStart(2,"0")}`:"";
 }
+function month(d){const iso=dateISO(d);return iso?iso.slice(0,7):"";}
 function absSum(a){return a.reduce((s,x)=>s+Math.abs(Number(x.amount)||0),0)}
 function exp(a){return a.filter(x=>Number(x.amount)<0 && x.category!=="Transferências")}
 function inc(a){return a.filter(x=>Number(x.amount)>0 && x.category!=="Transferências")}
@@ -237,7 +242,7 @@ async function driveConnectAndDownload(){
 function dashboard(){
  ensureReportSelection();
  const today=new Date().toISOString().slice(0,10);
- const allToDate=tx.filter(x=>/^20\d{2}-\d{2}-\d{2}$/.test(String(x.date||"")) && x.date<=today);
+ const allToDate=tx.filter(x=>{const d=dateISO(x.date);return d&&d<=today});
  const isAll=dashboardScope==="all";
  const m=reportMonth;
  const scoped=isAll?allToDate:allToDate.filter(x=>month(x.date)===dashboardScope);
@@ -246,7 +251,7 @@ function dashboard(){
  const cats={};exp(scoped).forEach(x=>{const k=x.subcategory||"A identificar";cats[k]=(cats[k]||0)+Math.abs(Number(x.amount)||0)});
  const rest=absSum(exp(scoped).filter(x=>x.subcategory==="Restaurante"));
  const selected=reportCompare.filter(x=>x!==m);
- const hist=tx.filter(x=>x.subcategory==="Restaurante"&&selected.includes(month(x.date))&&x.date<=today);
+ const hist=tx.filter(x=>{const d=dateISO(x.date);return x.subcategory==="Restaurante"&&selected.includes(month(d))&&d&&d<=today});
  const hm=[...new Set(hist.map(x=>month(x.date)))]; const av=hm.length?absSum(hist)/hm.length:0;
  const periodLabel=isAll?"Total até hoje":dashboardScope;
  const insight=isAll
