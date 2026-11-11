@@ -255,7 +255,7 @@ function dashboard(){
  const hm=[...new Set(hist.map(x=>month(x.date)))]; const av=hm.length?absSum(hist)/hm.length:0;
  const periodLabel=isAll?"Total até hoje":dashboardScope;
  const insight=isAll
-  ? `<div class="insight"><b>✓ Visão acumulada</b>Os indicadores e a distribuição de despesas incluem todos os movimentos registados até hoje.</div>`
+  ? `<div class="insight"><b>✓ Visão acumulada</b> Os indicadores e a distribuição de despesas incluem todos os movimentos registados até hoje.</div>`
   : (rest&&av&&rest>av*1.2?`<div class="insight"><b>⚠️ Restaurantes acima da média</b>Gastaste ${eur(rest)} em ${dashboardScope}. A média dos meses selecionados é ${eur(av)}.</div>`:`<div class="insight"><b>✓ Visão mensal: ${dashboardScope}</b>${selected.length?`Comparação disponível com ${selected.length} mês(es) selecionado(s) na análise.`:`Podes comparar este mês com outros na página Análise.`}</div>`);
  return head("Dashboard","Visão geral — seleciona um mês ou consulta o total até hoje",`<button class="btn" onclick="openModal()">＋ Importar extrato</button>`)+
  monthPicker("dashboard")+
@@ -271,7 +271,7 @@ function dashboard(){
  ${Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="row"><span>${escapeHtml(k)}</span><b>${eur(v)}</b></div>`).join("")||`<div class="empty-state">Sem despesas neste período.</div>`}</div>
  <div class="card"><h2>🧠 Insights</h2>
  ${insight}
- <div class="insight"><b>📌 Classificação automática</b>Pingo Doce → Alimentação › Mercado; EDP → Casa › Eletricidade; Uber Eats → Alimentação › Delivery.</div>
+ <div class="insight"><b>📌 Classificação automática</b> Pingo Doce → Alimentação › Mercado; EDP → Casa › Eletricidade; Uber Eats → Alimentação › Delivery.</div>
  </div></div>`;
 }
 
